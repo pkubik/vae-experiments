@@ -1,21 +1,50 @@
-from collections import namedtuple
 from pathlib import Path
 from typing import Union
 
 import tensorflow as tf
 import numpy as np
+import matplotlib as mpl
+import matplotlib.figure
+import matplotlib.backends.backend_svg
 
 from vae.data import Dataset
 from vae.image import norm_images
 from vae.net import VAE
 
 
+def save_grid_plot(sess: tf.train.MonitoredSession, vae: VAE, path: Path):
+    a = np.arange(-2., 2. + 10e-8, 0.2)
+    t_grid = np.transpose(np.meshgrid(a, a))
+    full_t_grid = np.pad(np.reshape(t_grid, [-1, 2]), ((0, 0), (0, vae.latent_dim - 2)), 'constant')
+
+    images = sess.run_step_fn(
+        lambda step_context: step_context.session.run(vae.x_mean, feed_dict={vae.t: full_t_grid}))
+
+    plot_data = np.transpose(
+        np.reshape(images, [len(a), len(a), 28, 28]),
+        [0, 2, 1, 3])
+    plot_data = plot_data.reshape([len(a) * 28, len(a) * 28])
+
+    fig = mpl.figure.Figure()
+    subplot = fig.add_subplot(111)
+    subplot.imshow(plot_data)
+    fig.axes[0].set_axis_off()
+
+    path.mkdir(exist_ok=True)
+    global_step = sess.run_step_fn(
+        lambda step_context: step_context.session.run(tf.train.get_global_step()))
+    plot_path = path / 'grid_{}.svg'.format(global_step)
+
+    mpl.backends.backend_svg.FigureCanvas(fig)
+    fig.savefig(str(plot_path))
+
+
 class Model:
     def __init__(self, model_dir: Union[str, Path]):
         self.gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.8)
         self.config_proto = tf.ConfigProto(gpu_options=self.gpu_options)
-        self.steps_before_eval = 200
-        self.batch_size = 64
+        self.steps_before_eval = 1000
+        self.batch_size = 128
         self.num_epochs = None
         self.image_shape = (28, 28, 1)
         self.model_dir = Path(model_dir)
@@ -28,12 +57,6 @@ class Model:
         with graph.as_default():
             tf.train.get_or_create_global_step()
 
-            # dataset = tf.data.Dataset.from_tensor_slices(images)
-            # dataset = dataset.repeat(self.num_epochs)
-            # dataset = dataset.shuffle(1)
-            # dataset = dataset.batch(self.batch_size)
-
-            # batch_iterator = dataset.make_one_shot_iterator().get_next()
             batch_iterator = tf.estimator.inputs.numpy_input_fn(
                 x=images,
                 num_epochs=self.num_epochs,
@@ -61,46 +84,10 @@ class Model:
                          vae.x_mean])
 
                     i += 1
-                    if i == progbar.target:
-                        progbar.target *= 2
-                        # image, test_t = sess.run([vae.x_mean, vae.t], feed_dict={
-                        #     vae.x: [data[1], np.expand_dims(subset[-1], -1)],
-                        #     vae.t_dist.scale: np.zeros([1, vae.latent_dim])
-                        # })
-                        # sampled_t, sampled_image = sess.run([vae.t, vae.x_mean], feed_dict={
-                        #     vae.t_dist.loc: np.zeros([self.batch_size, vae.latent_dim]),
-                        #     vae.t_dist.scale: np.ones([self.batch_size, vae.latent_dim])
-                        # })
-
-                        # clear_output(wait=True)
-                        # fig = plt.figure(figsize=(12, 16))
-                        # grid = plt.GridSpec(3, 2)
-                        #
-                        # plt.subplot(grid[0, 0], title='Train example')
-                        # plt.imshow(data[1, :, :, 0])
-                        #
-                        # plt.subplot(grid[0, 1], title='Train reconstruction')
-                        # plt.imshow(np.clip(image[0, :, :, 0], 0., 1.))
-                        #
-                        # plt.subplot(grid[1, 0], title='Test example')
-                        # plt.imshow(subset[-1])
-                        #
-                        # plt.subplot(grid[1, 1], title='Test reconstruction')
-                        # plt.imshow(np.clip(image[1, :, :, 0], 0., 1.))
-                        #
-                        # plt.subplot(grid[2, 0], title='t values (first 2 dims)')
-                        # x_values = np.reshape(x_batch, [-1])
-                        # plt.scatter(t[:, 0], t[:, 1])
-                        # plt.scatter(test_t[0, 0], test_t[0, 1], s=64)
-                        # plt.scatter(test_t[1, 0], test_t[1, 1], s=64, marker='x')
-                        # plt.scatter(sampled_t[0, 0], sampled_t[0, 1], s=64, marker='^')
-                        #
-                        # plt.subplot(grid[2, 1], title='Sampled image')
-                        # plt.imshow(np.clip(sampled_image[0, :, :, 0], 0., 1.))
-                        #
-                        # plt.show()
-                        #
-                        # self._plot_grid(sess, vae)
+                    if i == self.steps_before_eval:
+                        i = 1
+                        progbar = tf.keras.utils.Progbar(self.steps_before_eval)
+                        save_grid_plot(sess, vae, self.model_dir / 'plots')
 
                     progbar.update(i, [
                         ('rec loss', rec_loss),

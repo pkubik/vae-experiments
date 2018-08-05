@@ -107,11 +107,11 @@ VAETrainSpec = namedtuple('VAETrainSpec', 'train_op, vlb, loss')
 
 
 class VAE:
-    latent_dim = 10
+    latent_dim = 2
 
     def __init__(self, x):
         self.image_shape = list(x.shape[1:])
-        self.x = tf.identity(x, name='x')
+        self.x = tf.placeholder_with_default(x, (None, *self.image_shape), name='x')
         self.encoder = Encoder(self.latent_dim)
         self.decoder = Decoder()
 
