@@ -7,7 +7,6 @@ def train(model_name: str):
     data = load_mnist()
 
     model = Model(default_models_dir() / model_name)
-    #model.num_epochs = 10
     model.train(data.train)
 
 

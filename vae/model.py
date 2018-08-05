@@ -1,18 +1,17 @@
+from collections import namedtuple
 from pathlib import Path
 from typing import Union
 
 import tensorflow as tf
 import numpy as np
-import matplotlib as mpl
-import matplotlib.figure
-import matplotlib.backends.backend_svg
+import matplotlib.pyplot as plt
 
 from vae.data import Dataset
 from vae.image import norm_images
 from vae.net import VAE
 
 
-def save_grid_plot(sess: tf.train.MonitoredSession, vae: VAE, path: Path):
+def save_grid_plot(sess: tf.train.MonitoredSession, step: int, vae: VAE, path: Path):
     a = np.arange(-2., 2. + 10e-8, 0.2)
     t_grid = np.transpose(np.meshgrid(a, a))
     full_t_grid = np.pad(np.reshape(t_grid, [-1, 2]), ((0, 0), (0, vae.latent_dim - 2)), 'constant')
@@ -25,18 +24,10 @@ def save_grid_plot(sess: tf.train.MonitoredSession, vae: VAE, path: Path):
         [0, 2, 1, 3])
     plot_data = plot_data.reshape([len(a) * 28, len(a) * 28])
 
-    fig = mpl.figure.Figure()
-    subplot = fig.add_subplot(111)
-    subplot.imshow(plot_data)
-    fig.axes[0].set_axis_off()
-
     path.mkdir(exist_ok=True)
-    global_step = sess.run_step_fn(
-        lambda step_context: step_context.session.run(tf.train.get_global_step()))
-    plot_path = path / 'grid_{}.svg'.format(global_step)
+    plot_path = path / 'grid_{}.png'.format(step)
 
-    mpl.backends.backend_svg.FigureCanvas(fig)
-    fig.savefig(str(plot_path))
+    plt.imsave(str(plot_path), plot_data, format="png")
 
 
 class Model:
@@ -55,7 +46,7 @@ class Model:
 
         graph = tf.Graph()
         with graph.as_default():
-            tf.train.get_or_create_global_step()
+            global_step = tf.train.get_or_create_global_step()
 
             batch_iterator = tf.estimator.inputs.numpy_input_fn(
                 x=images,
@@ -71,28 +62,31 @@ class Model:
                     config=self.config_proto) as sess:
 
                 progbar = tf.keras.utils.Progbar(self.steps_before_eval)
-                i = 0
                 while not sess.should_stop():
-                    _, loss, t, t_scale_mean, rec_loss, reg_loss, x_batch, x_mean_batch = sess.run(
-                        [vae_train.train_op,
-                         vae_train.vlb.total_loss,
-                         vae.t,
-                         vae.t_scale_mean,
-                         vae_train.vlb.reconstruction_loss,
-                         vae_train.vlb.regularization_loss,
-                         vae.x,
-                         vae.x_mean])
+                    Fetches = namedtuple('Fetches',
+                                         'global_step,'
+                                         'train_op, total_loss, t, t_scale_mean,'
+                                         'rec_loss, reg_loss, x, x_mean')
+                    fetches = Fetches(global_step,
+                                      vae_train.train_op,
+                                      vae_train.vlb.total_loss,
+                                      vae.t,
+                                      vae.t_scale_mean,
+                                      vae_train.vlb.reconstruction_loss,
+                                      vae_train.vlb.regularization_loss,
+                                      vae.x,
+                                      vae.x_mean)
+                    outputs = sess.run(fetches)
 
-                    i += 1
-                    if i == self.steps_before_eval:
-                        i = 1
+                    i = outputs.global_step % self.steps_before_eval
+                    if i == 0:
                         progbar = tf.keras.utils.Progbar(self.steps_before_eval)
-                        save_grid_plot(sess, vae, self.model_dir / 'plots')
+                        save_grid_plot(sess, outputs.global_step, vae, self.model_dir / 'plots')
 
                     progbar.update(i, [
-                        ('rec loss', rec_loss),
-                        ('reg loss', reg_loss),
-                        ('t scale', t_scale_mean)])
+                        ('rec loss', outputs.rec_loss),
+                        ('reg loss', outputs.reg_loss),
+                        ('t scale', outputs.t_scale_mean)])
 
     def generate_from_latent(self, t):
         graph = tf.Graph()
