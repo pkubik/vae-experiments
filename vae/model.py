@@ -11,13 +11,40 @@ from vae.image import norm_images
 from vae.net import VAE
 
 
-def save_grid_plot(sess: tf.train.MonitoredSession, step: int, vae: VAE, path: Path):
+def raw_run(sess: tf.train.MonitoredSession, fetches, feed_dict):
+    """
+    Runs the `tf.train.MonitoredSession` without the session hooks.
+
+    :param sess: session to run
+    :param fetches: fetches (see `tf.Session.run`)
+    :param feed_dict: feed dict (see `tf.Session.run`)
+    :return: fetched outputs
+    """
+    def step_fn(step_context):
+        return step_context.session.run(fetches, feed_dict)
+    return sess.run_step_fn(step_fn)
+
+
+def save_grid_plot(sess: tf.train.MonitoredSession, label: int, step: int, vae: VAE, path: Path):
+    """
+    Plots images generated using latent codes that form a grid on the first
+    2 dimensions of the latent space.
+
+    Currently, due to introduction of the label condition, only digit 5 is plotted.
+
+    :param sess: managed session to use for drawing predictions
+    :param step: step count which will used in the filename
+    :param vae: `VAE` object used to construct the `sess` graph
+    :param path: path to the directory with plots
+    """
     a = np.arange(-2., 2. + 10e-8, 0.2)
     t_grid = np.transpose(np.meshgrid(a, a))
     full_t_grid = np.pad(np.reshape(t_grid, [-1, 2]), ((0, 0), (0, vae.latent_dim - 2)), 'constant')
 
-    images = sess.run_step_fn(
-        lambda step_context: step_context.session.run(vae.x_mean, feed_dict={vae.t: full_t_grid}))
+    images = raw_run(sess, vae.x_mean, feed_dict={
+        vae.t: full_t_grid,
+        vae.label: np.ones(full_t_grid.shape[0]) * label
+    })
 
     plot_data = np.transpose(
         np.reshape(images, [len(a), len(a), 28, 28]),
@@ -25,9 +52,14 @@ def save_grid_plot(sess: tf.train.MonitoredSession, step: int, vae: VAE, path: P
     plot_data = plot_data.reshape([len(a) * 28, len(a) * 28])
 
     path.mkdir(exist_ok=True)
-    plot_path = path / 'grid_{}.png'.format(step)
+    plot_path = path / 'grid_{}_{}.png'.format(label, step)
 
     plt.imsave(str(plot_path), plot_data, format="png")
+
+
+def save_grid_plots(sess: tf.train.MonitoredSession, step: int, vae: VAE, path: Path):
+    for i in range(10):
+        save_grid_plot(sess, i, step, vae, path)
 
 
 class Model:
@@ -43,18 +75,20 @@ class Model:
     def train(self, data: Dataset):
 
         images = norm_images(data.images)
+        labels = data.labels
 
         graph = tf.Graph()
         with graph.as_default():
             global_step = tf.train.get_or_create_global_step()
 
-            batch_iterator = tf.estimator.inputs.numpy_input_fn(
+            images_iterator, labels_iterator = tf.estimator.inputs.numpy_input_fn(
                 x=images,
+                y=labels,
                 num_epochs=self.num_epochs,
                 batch_size=self.batch_size,
                 shuffle=True)()
 
-            vae = VAE(batch_iterator)
+            vae = VAE(images_iterator, labels_iterator)
             vae_train = vae.create_train_spec()
 
             with tf.train.MonitoredTrainingSession(
@@ -81,7 +115,7 @@ class Model:
                     i = outputs.global_step % self.steps_before_eval
                     if i == 0:
                         progbar = tf.keras.utils.Progbar(self.steps_before_eval)
-                        save_grid_plot(sess, outputs.global_step, vae, self.model_dir / 'plots')
+                        save_grid_plots(sess, outputs.global_step, vae, self.model_dir / 'plots')
 
                     progbar.update(i, [
                         ('rec loss', outputs.rec_loss),

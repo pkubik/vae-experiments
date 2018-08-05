@@ -47,7 +47,7 @@ class VLB:
 
 
 class Encoder:
-    def __init__(self, latent_dim):
+    def __init__(self, latent_dim, num_labels):
         self.conv_layers = [
             tf.layers.Conv2D(5, 3, padding='SAME', activation=tf.nn.relu),
             tf.layers.Conv2D(10, 2, activation=tf.nn.relu),
@@ -59,8 +59,11 @@ class Encoder:
         self.mid_layer = tf.layers.Dense(200, activation=tf.tanh)
         self.mean_layer = tf.layers.Dense(latent_dim)
         self.log_var_layer = tf.layers.Dense(latent_dim)
+        self.label_layer = tf.layers.Dense(num_labels)
 
-    def __call__(self, x) -> tf.distributions.Normal:
+    Output = namedtuple('EncoderOutput', 't_dist, label_logits')
+
+    def __call__(self, x) -> Output:
         """
         Generate parameters for the estimated `q(t | x)` distribution.
         """
@@ -72,7 +75,8 @@ class Encoder:
 
         mean = self.mean_layer(final_h)
         std = tf.exp(self.log_var_layer(final_h) / 2)
-        return tf.distributions.Normal(mean, std)
+        label = self.label_layer(final_h)
+        return self.Output(tf.distributions.Normal(mean, std), label)
 
 
 class Decoder:
@@ -109,24 +113,29 @@ VAETrainSpec = namedtuple('VAETrainSpec', 'train_op, vlb, loss')
 class VAE:
     latent_dim = 2
 
-    def __init__(self, x):
+    def __init__(self, x, label, num_labels=10):
         self.image_shape = list(x.shape[1:])
+        self.num_labels = num_labels
         self.x = tf.placeholder_with_default(x, (None, *self.image_shape), name='x')
-        self.encoder = Encoder(self.latent_dim)
+        self.label = tf.placeholder_with_default(label, (None,), name='label')
+        self.encoder = Encoder(self.latent_dim, self.num_labels)
         self.decoder = Decoder()
 
         # Compute `q(t | x)` parameters, feed prior p(t) to hallucinate
-        self.t_dist = self.encoder(self.x)
+        self.t_dist, self.label_logits = self.encoder(self.x)
         self.t_scale_mean = tf.reduce_mean(self.t_dist.scale)
 
         # Sample `t`
         self.t = tf.identity(self.t_dist.sample(), name='t')
 
         # Generate mean output distribution `p(x | t)`
-        self.x_mean = tf.identity(self.decoder(self.t), name='x_mean')
+        self.label_embedding = tf.one_hot(self.label, self.num_labels)  # currently just one-hot
+        self.augmented_t = tf.concat([self.t, self.label_embedding], -1)
+        self.x_mean = tf.identity(self.decoder(self.augmented_t), name='x_mean')
 
         tf.summary.histogram('t', self.t)
         tf.summary.histogram('t_std', tf.nn.moments(self.t, -1)[1])
+        tf.summary.histogram('labels', tf.argmax(self.label_logits, -1))
         tf.summary.image('x_mean', self.x_mean)
 
     def create_train_spec(self):
