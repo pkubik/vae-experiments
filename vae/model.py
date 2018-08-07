@@ -1,13 +1,43 @@
 from collections import namedtuple
+
+from abc import ABC
 from pathlib import Path
 from typing import Union
 
 import tensorflow as tf
+import tensorpack as tp
+import tensorpack.tfutils.summary
 
 from vae.data import Dataset
 from vae.image import norm_images
 from vae.net import VAE
 from vae.plot import PlotSaverHook
+
+
+# noinspection PyAttributeOutsideInit
+class ModelDesc(tp.ModelDesc, ABC):
+    def __init__(self, image_shape):
+        self.image_shape = image_shape
+
+    def inputs(self):
+        """
+        Define all the inputs (with type, shape, name) that the graph will need.
+        """
+        return [tf.placeholder(tf.float32, (None, *self.image_shape), 'image'),
+                tf.placeholder(tf.int32, (None,), 'label')]
+
+    def build_graph(self, image, label):
+        """This function should build the model which takes the input variables
+        and return cost at the end"""
+
+        image = tf.expand_dims(image, -1)
+        self.vae = VAE(image, label)
+        self.vae_train = self.vae.create_train_spec()
+
+        return self.vae_train.vlb.total_loss
+
+    def optimizer(self):
+        return self.vae_train.optimizer
 
 
 class Model:
@@ -16,59 +46,31 @@ class Model:
         self.config_proto = tf.ConfigProto(gpu_options=self.gpu_options)
         self.steps_before_eval = 1000
         self.batch_size = 128
-        self.num_epochs = None
-        self.image_shape = (28, 28, 1)
+        self.num_epochs = 10
+        self.image_shape = (28, 28)
         self.model_dir = Path(model_dir)
+        self.model_desc = ModelDesc(self.image_shape)
 
-    def create_data_iterators(self, data: Dataset):
-        images = norm_images(data.images)
-        labels = data.labels
+    def create_data_flows(self):
+        train = tp.BatchData(tp.dataset.Mnist('train'), self.batch_size)
+        test = tp.BatchData(tp.dataset.Mnist('test'), self.batch_size, remainder=True)
+        return train, test
 
-        return tf.estimator.inputs.numpy_input_fn(
-            x=images,
-            y=labels,
-            num_epochs=self.num_epochs,
-            batch_size=self.batch_size,
-            shuffle=True)()
+    def train(self):
+        tp.logger.set_logger_dir(str(self.model_dir), 'k')
+        dataset_train, dataset_test = self.create_data_flows()
 
-    def train(self, data: Dataset):
-        graph = tf.Graph()
-        with graph.as_default():
-            global_step = tf.train.get_or_create_global_step()
-
-            images_iterator, labels_iterator = self.create_data_iterators(data)
-
-            vae = VAE(images_iterator, labels_iterator)
-            vae_train = vae.create_train_spec()
-
-            plot_saver_hook = PlotSaverHook(self.model_dir / 'plots', vae, self.steps_before_eval)
-
-            with tf.train.MonitoredTrainingSession(
-                    checkpoint_dir=str(self.model_dir),
-                    config=self.config_proto,
-                    hooks=[plot_saver_hook]) as sess:
-                progbar = tf.keras.utils.Progbar(self.steps_before_eval)
-                while not sess.should_stop():
-                    Fetches = namedtuple('Fetches',
-                                         'global_step,'
-                                         'train_op, total_loss, t, t_scale_mean,'
-                                         'rec_loss, reg_loss, x, x_mean')
-                    fetches = Fetches(global_step,
-                                      vae_train.train_op,
-                                      vae_train.vlb.total_loss,
-                                      vae.t,
-                                      vae.t_scale_mean,
-                                      vae_train.vlb.reconstruction_loss,
-                                      vae_train.vlb.regularization_loss,
-                                      vae.x,
-                                      vae.x_mean)
-                    outputs = sess.run(fetches)
-
-                    i = outputs.global_step % self.steps_before_eval
-                    if i == 0:
-                        progbar = tf.keras.utils.Progbar(self.steps_before_eval)
-
-                    progbar.update(i, [
-                        ('rec loss', outputs.rec_loss),
-                        ('reg loss', outputs.reg_loss),
-                        ('t scale', outputs.t_scale_mean)])
+        config = tp.AutoResumeTrainConfig(
+            model=self.model_desc,
+            data=tp.QueueInput(dataset_train),
+            callbacks=[
+                tp.ModelSaver(checkpoint_dir=str(self.model_dir)),
+                tp.MinSaver('validation_rec_loss'),
+                tp.InferenceRunner(
+                    dataset_test,
+                    [tp.ScalarStats(['rec_loss'])]),
+                tp.ProgressBar(['rec_loss'])
+            ],
+            max_epoch=self.num_epochs,
+        )
+        tp.launch_train_with_config(config, tp.SimpleTrainer())

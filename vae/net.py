@@ -31,7 +31,7 @@ class VLB:
         flat_x_mean = tf.reshape(x_decoded_mean, [batch_size, -1])
         x_mse = tf.reduce_sum(tf.square(flat_x - flat_x_mean), -1)
         rec_loss = x_mse / 2 * 4  # Assuming sigma of x equals 1/2
-        self.reconstruction_loss = tf.reduce_mean(rec_loss)
+        self.reconstruction_loss = tf.reduce_mean(rec_loss, name='rec_loss')
 
         # Regularization loss, KL(q || p)
         t_dist = tf.distributions.Normal(t_mean, tf.exp(t_log_var / 2))
@@ -107,7 +107,7 @@ class Decoder:
         return h
 
 
-VAETrainSpec = namedtuple('VAETrainSpec', 'train_op, vlb, loss')
+VAETrainSpec = namedtuple('VAETrainSpec', 'optimizer, train_op, vlb, loss')
 
 
 class VAE:
@@ -143,4 +143,4 @@ class VAE:
         optimizer = tf.train.AdamOptimizer()
         train_op = optimizer.minimize(vlb.total_loss, tf.train.get_global_step())
 
-        return VAETrainSpec(train_op, vlb, vlb.total_loss)
+        return VAETrainSpec(optimizer, train_op, vlb, vlb.total_loss)
