@@ -1,17 +1,13 @@
-from collections import namedtuple
-
 from abc import ABC
 from pathlib import Path
 from typing import Union
 
 import tensorflow as tf
 import tensorpack as tp
-import tensorpack.tfutils.summary
 
-from vae.data import Dataset
+from vae.data import Dataset, load_mnist
 from vae.image import norm_images
 from vae.net import VAE
-from vae.plot import PlotSaverHook
 
 
 # noinspection PyAttributeOutsideInit
@@ -40,8 +36,9 @@ class ModelDesc(tp.ModelDesc, ABC):
         return self.vae_train.optimizer
 
 
-class Model:
+class Model(tp.Trainer):
     def __init__(self, model_dir: Union[str, Path]):
+        super().__init__()
         self.gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.8)
         self.config_proto = tf.ConfigProto(gpu_options=self.gpu_options)
         self.steps_before_eval = 1000
@@ -49,28 +46,40 @@ class Model:
         self.num_epochs = 10
         self.image_shape = (28, 28)
         self.model_dir = Path(model_dir)
-        self.model_desc = ModelDesc(self.image_shape)
 
-    def create_data_flows(self):
-        train = tp.BatchData(tp.dataset.Mnist('train'), self.batch_size)
-        test = tp.BatchData(tp.dataset.Mnist('test'), self.batch_size, remainder=True)
-        return train, test
-
-    def train(self):
         tp.logger.set_logger_dir(str(self.model_dir), 'k')
-        dataset_train, dataset_test = self.create_data_flows()
+        images, labels = self.create_data_iterators(load_mnist().train)
+        self.vae = VAE(images, labels)
+        self.train_spec = self.vae.create_train_spec()
+        self.train_op = self.train_spec.train_op
+        self.steps_per_epoch = 400
 
-        config = tp.AutoResumeTrainConfig(
-            model=self.model_desc,
-            data=tp.QueueInput(dataset_train),
-            callbacks=[
-                tp.ModelSaver(checkpoint_dir=str(self.model_dir)),
-                tp.MinSaver('validation_rec_loss'),
-                tp.InferenceRunner(
-                    dataset_test,
-                    [tp.ScalarStats(['rec_loss'])]),
-                tp.ProgressBar(['rec_loss'])
-            ],
-            max_epoch=self.num_epochs,
-        )
-        tp.launch_train_with_config(config, tp.SimpleTrainer())
+    def create_data_iterators(self, data: Dataset):
+        images = norm_images(data.images)
+        labels = data.labels
+
+        return tf.estimator.inputs.numpy_input_fn(
+            x=images,
+            y=labels,
+            num_epochs=self.num_epochs,
+            batch_size=self.batch_size,
+            shuffle=True)()
+
+    #
+    # def train(self):
+    #     tp.logger.set_logger_dir(str(self.model_dir), 'k')
+    #     dataset_train, dataset_test = self.create_data_flows()
+    #
+    #     config = tp.AutoResumeTrainConfig(
+    #         model=self.model_desc,
+    #         data=tp.QueueInput(dataset_train),
+    #         callbacks=[
+    #             tp.ModelSaver(checkpoint_dir=str(self.model_dir)),
+    #             tp.MinSaver('validation_rec_loss'),
+    #             tp.InferenceRunner(
+    #                 dataset_test,
+    #                 [tp.ScalarStats(['rec_loss'])])
+    #         ],
+    #         max_epoch=self.num_epochs,
+    #     )
+    #     tp.launch_train_with_config(config, tp.SimpleTrainer())
