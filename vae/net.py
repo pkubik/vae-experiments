@@ -133,9 +133,10 @@ class VAE:
         self.augmented_t = tf.concat([self.t, self.label_embedding], -1)
         self.x_mean = tf.identity(self.decoder(self.augmented_t), name='x_mean')
 
-        tf.summary.histogram('t', self.t)
+        tf.summary.histogram('t0', self.t[0])
         tf.summary.histogram('t_std', tf.nn.moments(self.t, -1)[1])
         tf.summary.histogram('labels', tf.argmax(self.label_logits, -1))
+        tf.summary.histogram('target_labels', self.label)
         tf.summary.image('x_mean', self.x_mean)
 
     def create_train_spec(self):

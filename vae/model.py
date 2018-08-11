@@ -1,4 +1,6 @@
 from collections import namedtuple
+
+from contextlib import suppress
 from pathlib import Path
 from typing import Union
 
@@ -10,35 +12,51 @@ from vae.net import VAE
 from vae.plot import PlotSaverHook
 
 
+class DataIterator:
+    def __init__(self, batch_size: int, data: Dataset):
+        self.data = data
+
+        images = norm_images(data.images)
+        labels = data.labels
+
+        self.images_placeholder = tf.placeholder(images.dtype, images.shape)
+        self.labels_placeholder = tf.placeholder(labels.dtype, labels.shape)
+
+        dataset = tf.data.Dataset.from_tensor_slices(
+            Dataset(self.images_placeholder, self.labels_placeholder))
+        self.iterator = (dataset
+                         .shuffle(2048)
+                         .batch(batch_size)
+                         .repeat(1)
+                         .map(lambda x: Dataset(tf.expand_dims(x.images, -1), x.labels))
+                         .make_initializable_iterator())
+        self.next = self.iterator.get_next()
+
+    def initialize(self, sess: tf.Session):
+        sess.run(self.iterator.initializer, feed_dict={
+            self.images_placeholder: self.data.images,
+            self.labels_placeholder: self.data.labels
+        })
+
+
 class Model:
     def __init__(self, model_dir: Union[str, Path]):
         self.gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.8)
         self.config_proto = tf.ConfigProto(gpu_options=self.gpu_options)
         self.steps_before_eval = 1000
         self.batch_size = 128
-        self.num_epochs = None
-        self.image_shape = (28, 28, 1)
+        self.num_epochs = 100
+        self.image_shape = (28, 28)
         self.model_dir = Path(model_dir)
-
-    def create_data_iterators(self, data: Dataset):
-        images = norm_images(data.images)
-        labels = data.labels
-
-        return tf.estimator.inputs.numpy_input_fn(
-            x=images,
-            y=labels,
-            num_epochs=self.num_epochs,
-            batch_size=self.batch_size,
-            shuffle=True)()
 
     def train(self, data: Dataset):
         graph = tf.Graph()
         with graph.as_default():
             global_step = tf.train.get_or_create_global_step()
 
-            images_iterator, labels_iterator = self.create_data_iterators(data)
+            data_iterator = DataIterator(self.batch_size, data)
 
-            vae = VAE(images_iterator, labels_iterator)
+            vae = VAE(data_iterator.next.images, data_iterator.next.labels)
             vae_train = vae.create_train_spec()
 
             plot_saver_hook = PlotSaverHook(self.model_dir / 'plots', vae, self.steps_before_eval)
@@ -47,28 +65,33 @@ class Model:
                     checkpoint_dir=str(self.model_dir),
                     config=self.config_proto,
                     hooks=[plot_saver_hook]) as sess:
-                progbar = tf.keras.utils.Progbar(self.steps_before_eval)
-                while not sess.should_stop():
-                    Fetches = namedtuple('Fetches',
-                                         'global_step,'
-                                         'train_op, total_loss, t, t_scale_mean,'
-                                         'rec_loss, reg_loss, x, x_mean')
-                    fetches = Fetches(global_step,
-                                      vae_train.train_op,
-                                      vae_train.vlb.total_loss,
-                                      vae.t,
-                                      vae.t_scale_mean,
-                                      vae_train.vlb.reconstruction_loss,
-                                      vae_train.vlb.regularization_loss,
-                                      vae.x,
-                                      vae.x_mean)
-                    outputs = sess.run(fetches)
+                for epoch in range(self.num_epochs):
+                    print("Starting epoch {}".format(epoch))
 
-                    i = outputs.global_step % self.steps_before_eval
-                    if i == 0:
-                        progbar = tf.keras.utils.Progbar(self.steps_before_eval)
+                    progbar = tf.keras.utils.Progbar(self.steps_before_eval)
 
-                    progbar.update(i, [
-                        ('rec loss', outputs.rec_loss),
-                        ('reg loss', outputs.reg_loss),
-                        ('t scale', outputs.t_scale_mean)])
+                    with suppress(tf.errors.OutOfRangeError):
+                        data_iterator.initialize(sess._tf_sess())
+
+                        while not sess.should_stop():
+                            Fetches = namedtuple('Fetches',
+                                                 'global_step,'
+                                                 'train_op, t_scale_mean,'
+                                                 'rec_loss, reg_loss')
+                            fetches = Fetches(global_step,
+                                              vae_train.train_op,
+                                              vae.t_scale_mean,
+                                              vae_train.vlb.reconstruction_loss,
+                                              vae_train.vlb.regularization_loss)
+                            outputs = sess.run(fetches)
+
+                            i = outputs.global_step % self.steps_before_eval
+                            if i == 0:
+                                progbar = tf.keras.utils.Progbar(self.steps_before_eval)
+
+                            progbar.update(i, [
+                                ('rec loss', outputs.rec_loss),
+                                ('reg loss', outputs.reg_loss),
+                                ('t scale', outputs.t_scale_mean)])
+
+                    print()

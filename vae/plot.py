@@ -17,7 +17,7 @@ def save_grid_plot(sess: tf.Session, label: int, step: int, vae: VAE, path: Path
     :param vae: `VAE` object used to construct the `sess` graph
     :param path: path to the directory with plots
     """
-    a = np.arange(-2., 2. + 10e-8, 0.2)
+    a = np.arange(-2., 2. + 10e-8, 0.4)
     t_grid = np.transpose(np.meshgrid(a, a))
     full_t_grid = np.pad(np.reshape(t_grid, [-1, 2]), ((0, 0), (0, vae.latent_dim - 2)), 'constant')
 
@@ -38,8 +38,14 @@ def save_grid_plot(sess: tf.Session, label: int, step: int, vae: VAE, path: Path
 
 
 def save_grid_plots(sess: tf.Session, step: int, vae: VAE, path: Path):
-    for i in range(10):
+    for i in [1, 4, 8]:  # 3 most interesting digits
         save_grid_plot(sess, i, step, vae, path)
+
+
+def save_t_plot(t: np.ndarray, step: int, path: Path):
+    plt.scatter(t[:, 0], t[:, 1])
+    plt.savefig(str(path / "t_{}.svg".format(step)))
+    plt.close()
 
 
 class PlotSaverHook(tf.train.SessionRunHook):
@@ -51,14 +57,16 @@ class PlotSaverHook(tf.train.SessionRunHook):
         self.steps_per_save = steps_per_save
 
     def before_run(self, run_context):  # pylint: disable=unused-argument
-        return tf.train.SessionRunArgs(tf.train.get_global_step())
+        return tf.train.SessionRunArgs({
+            "step": tf.train.get_global_step(),
+            "t_mean": self.vae.t_dist.loc
+        })
 
     def after_run(self,
                   run_context: tf.train.SessionRunContext,
                   run_values: tf.train.SessionRunValues):
-        step = run_values.results
+        step = run_values.results['step']
+        t_mean = run_values.results['t_mean']
         if step % self.steps_per_save == 0:
             save_grid_plots(run_context.session, step, self.vae, self.path)
-
-    def end(self, session=None):
-        self.writer.flush()
+            save_t_plot(t_mean, step, self.path)
