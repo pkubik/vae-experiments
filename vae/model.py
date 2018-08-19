@@ -6,7 +6,8 @@ from typing import Union
 
 import tensorflow as tf
 
-from vae.data import Dataset
+from vae import configurator as cfg
+from vae.data import Dataset, save_yaml
 from vae.image import norm_images
 from vae.net import VAE
 from vae.plot import PlotSaverHook
@@ -43,11 +44,12 @@ class Model:
     def __init__(self, model_dir: Union[str, Path]):
         self.gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.8)
         self.config_proto = tf.ConfigProto(gpu_options=self.gpu_options)
-        self.steps_before_eval = 1000
-        self.batch_size = 128
-        self.num_epochs = 100
-        self.image_shape = (28, 28)
+        self.steps_before_eval = cfg.get('steps_before_eval', 1000)
+        self.batch_size = cfg.get('batch_size', 128)
+        self.num_epochs = cfg.get('num_epochs', 100)
+        self.image_shape = cfg.get('image_shape', [28, 28])
         self.model_dir = Path(model_dir)
+        self.model_dir.mkdir(parents=True, exist_ok=True)
 
     def train(self, data: Dataset):
         graph = tf.Graph()
@@ -60,6 +62,8 @@ class Model:
             vae_train = vae.create_train_spec()
 
             plot_saver_hook = PlotSaverHook(self.model_dir / 'plots', vae, self.steps_before_eval)
+
+            save_yaml(cfg.current(), self.model_dir / 'config.yml')
 
             with tf.train.MonitoredTrainingSession(
                     checkpoint_dir=str(self.model_dir),

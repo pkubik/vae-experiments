@@ -1,13 +1,15 @@
 import sys
-from vae.data import load_mnist, default_models_dir
+import vae.configurator as cfg
+from vae.data import load_mnist, default_models_dir, default_config, save_yaml
 from vae.model import Model
 
 
 def train(model_name: str):
-    data = load_mnist()
+    with cfg.use(default_config()):
+        data = load_mnist()
 
-    model = Model(default_models_dir() / model_name)
-    model.train(data.train)
+        model = Model(default_models_dir() / model_name)
+        model.train(data.train)
 
 
 if __name__ == '__main__':
