@@ -1,6 +1,7 @@
 from collections import namedtuple
 
 import tensorflow as tf
+from vae import configurator as cfg
 
 
 def clip(x, eps=10e-16):
@@ -30,7 +31,8 @@ class VLB:
         flat_x = tf.reshape(x, [batch_size, -1])
         flat_x_mean = tf.reshape(x_decoded_mean, [batch_size, -1])
         x_mse = tf.reduce_sum(tf.square(flat_x - flat_x_mean), -1)
-        rec_loss = x_mse / 2 * 4  # Assuming sigma of x equals 1/2
+        image_var = cfg.get('image_dist_var', 1 / 4)
+        rec_loss = x_mse / 2 / image_var  # Assuming sigma of x equals 1/2
         self.reconstruction_loss = tf.reduce_mean(rec_loss)
 
         # Regularization loss, KL(q || p)
@@ -48,15 +50,16 @@ class VLB:
 
 class Encoder:
     def __init__(self, latent_dim, num_labels):
+        scale = cfg.get('encoder_scale', 5)
         self.conv_layers = [
-            tf.layers.Conv2D(5, 3, padding='SAME', activation=tf.nn.relu),
-            tf.layers.Conv2D(10, 2, activation=tf.nn.relu),
-            tf.layers.Conv2D(20, 3, 2, activation=tf.nn.relu),
-            tf.layers.Conv2D(50, 3, activation=tf.nn.relu),
-            tf.layers.Conv2D(50, 3, 2, activation=tf.nn.relu),
-            tf.layers.Conv2D(100, 3, activation=tf.nn.relu)
+            tf.layers.Conv2D(scale, 3, padding='SAME', activation=tf.nn.relu),
+            tf.layers.Conv2D(scale * 2, 2, activation=tf.nn.relu),
+            tf.layers.Conv2D(scale * 4, 3, 2, activation=tf.nn.relu),
+            tf.layers.Conv2D(scale * 10, 3, activation=tf.nn.relu),
+            tf.layers.Conv2D(scale * 10, 3, 2, activation=tf.nn.relu),
+            tf.layers.Conv2D(scale * 20, 3, activation=tf.nn.relu)
         ]
-        self.mid_layer = tf.layers.Dense(200, activation=tf.tanh)
+        self.mid_layer = tf.layers.Dense(scale * 40, activation=tf.tanh)
         self.mean_layer = tf.layers.Dense(latent_dim)
         self.log_var_layer = tf.layers.Dense(latent_dim)
         self.label_layer = tf.layers.Dense(num_labels)
@@ -81,15 +84,17 @@ class Encoder:
 
 class Decoder:
     def __init__(self):
-        self.init_layer = tf.layers.Dense(900, activation=tf.nn.relu)
+        scale = cfg.get('decoder_scale', 10)
+        self.scale = scale
+        self.init_layer = tf.layers.Dense(scale * 90, activation=tf.nn.relu)
 
         self.conv_layers = [
-            tf.layers.Conv2DTranspose(100, 3, activation=tf.nn.relu),
-            tf.layers.Conv2DTranspose(50, 3, 2, activation=tf.nn.relu),
-            tf.layers.Conv2DTranspose(50, 3, activation=tf.nn.relu),
-            tf.layers.Conv2DTranspose(20, 3, 2, activation=tf.nn.relu),
-            tf.layers.Conv2DTranspose(20, 2, activation=tf.nn.relu),
-            tf.layers.Conv2DTranspose(10, 3)
+            tf.layers.Conv2DTranspose(scale * 10, 3, activation=tf.nn.relu),
+            tf.layers.Conv2DTranspose(scale * 5, 3, 2, activation=tf.nn.relu),
+            tf.layers.Conv2DTranspose(scale * 5, 3, activation=tf.nn.relu),
+            tf.layers.Conv2DTranspose(scale * 2, 3, 2, activation=tf.nn.relu),
+            tf.layers.Conv2DTranspose(scale * 2, 2, activation=tf.nn.relu),
+            tf.layers.Conv2DTranspose(scale, 3)
         ]
 
     def __call__(self, t):
@@ -98,7 +103,7 @@ class Decoder:
         """
         init_h = self.init_layer(t)
 
-        h = tf.reshape(init_h, [-1, 3, 3, 100])
+        h = tf.reshape(init_h, [-1, 3, 3, self.scale * 10])
         for conv in self.conv_layers:
             h = conv(h)
 
@@ -111,7 +116,7 @@ VAETrainSpec = namedtuple('VAETrainSpec', 'train_op, vlb, loss')
 
 
 class VAE:
-    latent_dim = 2
+    latent_dim = cfg.get('latent_dim', 2)
 
     def __init__(self, x, label, num_labels=10):
         self.image_shape = list(x.shape[1:])

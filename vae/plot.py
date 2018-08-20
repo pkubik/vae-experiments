@@ -3,6 +3,7 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+from vae import configurator as cfg
 from vae.net import VAE
 
 
@@ -27,9 +28,9 @@ def save_grid_plot(sess: tf.Session, label: int, step: int, vae: VAE, path: Path
     })
 
     plot_data = np.transpose(
-        np.reshape(images, [len(a), len(a), 28, 28]),
+        np.reshape(images, [len(a), len(a), *vae.image_shape[:-1]]),
         [0, 2, 1, 3])
-    plot_data = plot_data.reshape([len(a) * 28, len(a) * 28])
+    plot_data = plot_data.reshape([len(a) * vae.image_shape[0], len(a) * vae.image_shape[1]])
 
     path.mkdir(exist_ok=True)
     plot_path = path / 'grid_{}_{}.png'.format(label, step)
@@ -38,7 +39,8 @@ def save_grid_plot(sess: tf.Session, label: int, step: int, vae: VAE, path: Path
 
 
 def save_grid_plots(sess: tf.Session, step: int, vae: VAE, path: Path):
-    for i in [1, 4, 8]:  # 3 most interesting digits
+    digits_to_plot = cfg.get('digits_to_plot', [1, 4, 8])
+    for i in digits_to_plot:  # 3 most interesting digits
         save_grid_plot(sess, i, step, vae, path)
 
 

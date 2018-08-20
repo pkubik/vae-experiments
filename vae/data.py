@@ -1,5 +1,4 @@
 from collections import namedtuple
-from contextlib import suppress
 from pathlib import Path
 
 import tensorflow as tf
@@ -23,22 +22,13 @@ def default_models_dir() -> Path:
     return path
 
 
-def default_config() -> dict:
-    path = Path(vae.__file__).parent.parent / 'configs'
-    path.mkdir(parents=True, exist_ok=True)
-
-    # noinspection PyUnusedLocal
-    config = None
-    with suppress(FileNotFoundError):
-        config = yaml.load((path / 'local.yml').open())
-    if config is None:
-        with suppress(FileNotFoundError):
-            config = yaml.load((path / 'default.yml').open())
-    if config is None:
-        config = {}
-
-    return config
+def open_config(name: str = 'local') -> dict:
+    path = Path(vae.__file__).parent.parent / 'configs' / '{}.yml'.format(name)
+    return yaml.load(path.open())
 
 
-def save_yaml(content: dict, path: Path):
+def save_config(content: dict, path: Path):
+    configs_path = Path(vae.__file__).parent.parent / 'configs'
+    configs_path.mkdir(parents=True, exist_ok=True)
+    yaml.dump(content, (configs_path / 'latest.yml').open('w'))
     yaml.dump(content, path.open('w'))

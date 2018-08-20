@@ -1,4 +1,0 @@
-batch_size: 128
-image_shape: [28, 28]
-num_epochs: 10
-steps_before_eval: 500

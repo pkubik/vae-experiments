@@ -7,7 +7,7 @@ from typing import Union
 import tensorflow as tf
 
 from vae import configurator as cfg
-from vae.data import Dataset, save_yaml
+from vae.data import Dataset, save_config
 from vae.image import norm_images
 from vae.net import VAE
 from vae.plot import PlotSaverHook
@@ -26,7 +26,7 @@ class DataIterator:
         dataset = tf.data.Dataset.from_tensor_slices(
             Dataset(self.images_placeholder, self.labels_placeholder))
         self.iterator = (dataset
-                         .shuffle(2048)
+                         .shuffle(cfg.get('shuffle_buffer_size', 2048))
                          .batch(batch_size)
                          .repeat(1)
                          .map(lambda x: Dataset(tf.expand_dims(x.images, -1), x.labels))
@@ -42,7 +42,7 @@ class DataIterator:
 
 class Model:
     def __init__(self, model_dir: Union[str, Path]):
-        self.gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.8)
+        self.gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=cfg.get('gpu_memory_fraction', 0.8))
         self.config_proto = tf.ConfigProto(gpu_options=self.gpu_options)
         self.steps_before_eval = cfg.get('steps_before_eval', 1000)
         self.batch_size = cfg.get('batch_size', 128)
@@ -63,7 +63,7 @@ class Model:
 
             plot_saver_hook = PlotSaverHook(self.model_dir / 'plots', vae, self.steps_before_eval)
 
-            save_yaml(cfg.current(), self.model_dir / 'config.yml')
+            save_config(cfg.current(), self.model_dir / 'config.yml')
 
             with tf.train.MonitoredTrainingSession(
                     checkpoint_dir=str(self.model_dir),

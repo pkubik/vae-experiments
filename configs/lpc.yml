@@ -1,0 +1,10 @@
+batch_size: 32
+decoder_scale: 5
+encoder_scale: 5
+gpu_memory_fraction: 0.8
+image_dist_var: 0.25
+image_shape: [28, 28]
+latent_dim: 2
+num_epochs: 100
+shuffle_buffer_size: 1024
+steps_before_eval: 500

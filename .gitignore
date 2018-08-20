@@ -1,5 +1,6 @@
 models
 .ipynb_*
 configs/local.yml
+configs/latest.yml
 .idea
 __pycache__
