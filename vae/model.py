@@ -15,10 +15,9 @@ from vae.plot import PlotSaverHook
 
 class DataIterator:
     def __init__(self, batch_size: int, data: Dataset):
-        self.data = data
-
         images = norm_images(data.images)
         labels = data.labels
+        self.data = Dataset(images, labels)
 
         self.images_placeholder = tf.placeholder(images.dtype, images.shape)
         self.labels_placeholder = tf.placeholder(labels.dtype, labels.shape)
