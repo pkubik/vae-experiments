@@ -116,9 +116,11 @@ VAETrainSpec = namedtuple('VAETrainSpec', 'train_op, vlb, loss')
 
 
 class VAE:
-    latent_dim = cfg.get('latent_dim', 2)
-
     def __init__(self, x, label, num_labels=10):
+        self.latent_dim = cfg.get('latent_dim', 2)
+        self.cond_latent_dim = cfg.get('cond_latent_dim', 10)
+        self.class_emb_dim = cfg.get('class_emb_dim', 5)
+
         self.image_shape = list(x.shape[1:])
         self.num_labels = num_labels
         self.x = tf.placeholder_with_default(x, (None, *self.image_shape), name='x')
@@ -134,8 +136,12 @@ class VAE:
         self.t = tf.identity(self.t_dist.sample(), name='t')
 
         # Generate mean output distribution `p(x | t)`
-        self.label_embedding = tf.one_hot(self.label, self.num_labels)  # currently just one-hot
-        self.augmented_t = tf.concat([self.t, self.label_embedding], -1)
+        self.label_embedding = tf.layers.dense(
+            tf.one_hot(self.label, self.num_labels),
+            self.class_emb_dim,
+            name='class_emb')
+        self.t_layer = tf.layers.Dense(self.cond_latent_dim, name='cond_t')
+        self.augmented_t = self.t_layer(tf.concat([self.t, self.label_embedding], -1))
         self.x_mean = tf.identity(self.decoder(self.augmented_t), name='x_mean')
 
         tf.summary.histogram('t0', self.t[0])
@@ -145,8 +151,9 @@ class VAE:
         tf.summary.image('x_mean', self.x_mean)
 
     def create_train_spec(self):
+        learning_rate = cfg.get('learning_rate', 0.001)
         vlb = VLB(self.x, self.x_mean, self.t_dist.loc, tf.log(self.t_dist.scale) * 2)
-        optimizer = tf.train.AdamOptimizer()
+        optimizer = tf.train.AdamOptimizer(learning_rate)
         train_op = optimizer.minimize(vlb.total_loss, tf.train.get_global_step())
 
         return VAETrainSpec(train_op, vlb, vlb.total_loss)
