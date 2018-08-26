@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from vae import configurator as cfg
-from vae.net import VAE
+from vae.net.vi import VAE
 
 
 def save_grid_plot(sess: tf.Session, label: int, step: int, vae: VAE, path: Path):

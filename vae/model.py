@@ -9,7 +9,7 @@ import tensorflow as tf
 from vae import configurator as cfg
 from vae.data import Dataset, save_config
 from vae.image import norm_images
-from vae.net import VAE
+from vae.net.vi import VAE
 from vae.plot import PlotSaverHook
 
 

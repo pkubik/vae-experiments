@@ -2,10 +2,7 @@ from collections import namedtuple
 
 import tensorflow as tf
 from vae import configurator as cfg
-
-
-def clip(x, eps=10e-16):
-    return tf.clip_by_value(x, eps, 1 - eps)
+from vae.net.cnn import Encoder, Decoder
 
 
 class VLB:
@@ -48,61 +45,6 @@ class VLB:
         tf.summary.scalar('regularization_loss', self.regularization_loss)
 
 
-class Encoder:
-    def __init__(self, output_dim):
-        scale = cfg.get('encoder_scale', 5)
-        self.conv_layers = [
-            tf.layers.Conv2D(scale, 3, padding='SAME', activation=tf.nn.relu),
-            tf.layers.Conv2D(scale * 2, 2, activation=tf.nn.relu),
-            tf.layers.Conv2D(scale * 4, 3, 2, activation=tf.nn.relu),
-            tf.layers.Conv2D(scale * 10, 3, activation=tf.nn.relu),
-            tf.layers.Conv2D(scale * 10, 3, 2, activation=tf.nn.relu),
-            tf.layers.Conv2D(scale * 20, 3, activation=tf.nn.relu)
-        ]
-        self.final_layer = tf.layers.Dense(output_dim, activation=tf.tanh)
-
-    def __call__(self, x) -> tf.Tensor:
-        """
-        Generate parameters for the estimated `q(t | x)` distribution.
-        """
-        h = x
-        for conv in self.conv_layers:
-            h = conv(h)
-
-        final_h = self.final_layer(tf.layers.flatten(h))
-        return final_h
-
-
-class Decoder:
-    def __init__(self):
-        scale = cfg.get('decoder_scale', 10)
-        self.scale = scale
-        self.init_layer = tf.layers.Dense(scale * 90, activation=tf.nn.relu)
-
-        self.conv_layers = [
-            tf.layers.Conv2DTranspose(scale * 10, 3, activation=tf.nn.relu),
-            tf.layers.Conv2DTranspose(scale * 5, 3, 2, activation=tf.nn.relu),
-            tf.layers.Conv2DTranspose(scale * 5, 3, activation=tf.nn.relu),
-            tf.layers.Conv2DTranspose(scale * 2, 3, 2, activation=tf.nn.relu),
-            tf.layers.Conv2DTranspose(scale * 2, 2, activation=tf.nn.relu),
-            tf.layers.Conv2DTranspose(scale, 3)
-        ]
-
-    def __call__(self, t):
-        """
-        Output the image distribution `p(x | t)` given the latent code.
-        """
-        init_h = self.init_layer(t)
-
-        h = tf.reshape(init_h, [-1, 3, 3, self.scale * 10])
-        for conv in self.conv_layers:
-            h = conv(h)
-
-        h = tf.layers.conv2d(h, 1, 3)
-
-        return h
-
-
 class NormalDiagLayer:
     def __init__(self, latent_dim):
         self.mean_layer = tf.layers.Dense(latent_dim)
@@ -119,13 +61,12 @@ class VAE:
         self.latent_dim = cfg.get('latent_dim', 2)
         self.cond_latent_dim = cfg.get('cond_latent_dim', 10)
         self.class_emb_dim = cfg.get('class_emb_dim', 5)
-        self.encoder_output_dim = cfg.get('encoder_output_dim', 200)
 
         self.image_shape = list(x.shape[1:])
         self.num_labels = num_labels
         self.x = tf.placeholder_with_default(x, (None, *self.image_shape), name='x')
         self.label = tf.placeholder_with_default(label, (None,), name='label')
-        self.encoder = Encoder(self.encoder_output_dim)
+        self.encoder = Encoder()
         self.t_layer = NormalDiagLayer(self.latent_dim)
         self.decoder = Decoder()
 
