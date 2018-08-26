@@ -49,7 +49,7 @@ class VLB:
 
 
 class Encoder:
-    def __init__(self, latent_dim, num_labels):
+    def __init__(self, output_dim):
         scale = cfg.get('encoder_scale', 5)
         self.conv_layers = [
             tf.layers.Conv2D(scale, 3, padding='SAME', activation=tf.nn.relu),
@@ -59,14 +59,9 @@ class Encoder:
             tf.layers.Conv2D(scale * 10, 3, 2, activation=tf.nn.relu),
             tf.layers.Conv2D(scale * 20, 3, activation=tf.nn.relu)
         ]
-        self.mid_layer = tf.layers.Dense(scale * 40, activation=tf.tanh)
-        self.mean_layer = tf.layers.Dense(latent_dim)
-        self.log_var_layer = tf.layers.Dense(latent_dim)
-        self.label_layer = tf.layers.Dense(num_labels)
+        self.final_layer = tf.layers.Dense(output_dim, activation=tf.tanh)
 
-    Output = namedtuple('EncoderOutput', 't_dist, label_logits')
-
-    def __call__(self, x) -> Output:
+    def __call__(self, x) -> tf.Tensor:
         """
         Generate parameters for the estimated `q(t | x)` distribution.
         """
@@ -74,12 +69,8 @@ class Encoder:
         for conv in self.conv_layers:
             h = conv(h)
 
-        final_h = self.mid_layer(tf.layers.flatten(h))
-
-        mean = self.mean_layer(final_h)
-        std = tf.exp(self.log_var_layer(final_h) / 2)
-        label = self.label_layer(final_h)
-        return self.Output(tf.distributions.Normal(mean, std), label)
+        final_h = self.final_layer(tf.layers.flatten(h))
+        return final_h
 
 
 class Decoder:
@@ -112,7 +103,15 @@ class Decoder:
         return h
 
 
-VAETrainSpec = namedtuple('VAETrainSpec', 'train_op, vlb, loss')
+class NormalDiagLayer:
+    def __init__(self, latent_dim):
+        self.mean_layer = tf.layers.Dense(latent_dim)
+        self.log_var_layer = tf.layers.Dense(latent_dim)
+
+    def __call__(self, emb) -> tf.distributions.Normal:
+        mean = self.mean_layer(emb)
+        std = tf.exp(self.log_var_layer(emb) / 2)
+        return tf.distributions.Normal(mean, std)
 
 
 class VAE:
@@ -120,17 +119,19 @@ class VAE:
         self.latent_dim = cfg.get('latent_dim', 2)
         self.cond_latent_dim = cfg.get('cond_latent_dim', 10)
         self.class_emb_dim = cfg.get('class_emb_dim', 5)
+        self.encoder_output_dim = cfg.get('encoder_output_dim', 200)
 
         self.image_shape = list(x.shape[1:])
         self.num_labels = num_labels
         self.x = tf.placeholder_with_default(x, (None, *self.image_shape), name='x')
         self.label = tf.placeholder_with_default(label, (None,), name='label')
-        self.encoder = Encoder(self.latent_dim, self.num_labels)
+        self.encoder = Encoder(self.encoder_output_dim)
+        self.t_layer = NormalDiagLayer(self.latent_dim)
         self.decoder = Decoder()
 
         # Compute `q(t | x)` parameters, feed prior p(t) to hallucinate
-        self.t_dist, self.label_logits = self.encoder(self.x)
-        self.t_scale_mean = tf.reduce_mean(self.t_dist.scale)
+        self.encoder_output = self.encoder(self.x)
+        self.t_dist = self.t_layer(self.encoder_output)
 
         # Sample `t`
         self.t = tf.identity(self.t_dist.sample(), name='t')
@@ -140,15 +141,16 @@ class VAE:
             tf.one_hot(self.label, self.num_labels),
             self.class_emb_dim,
             name='class_emb')
-        self.t_layer = tf.layers.Dense(self.cond_latent_dim, name='cond_t')
-        self.augmented_t = self.t_layer(tf.concat([self.t, self.label_embedding], -1))
+        self.cond_layer = tf.layers.Dense(self.cond_latent_dim, name='cond_layer')
+        self.augmented_t = self.cond_layer(tf.concat([self.t, self.label_embedding], -1))
         self.x_mean = tf.identity(self.decoder(self.augmented_t), name='x_mean')
 
         tf.summary.histogram('t0', self.t[0])
         tf.summary.histogram('t_std', tf.nn.moments(self.t, -1)[1])
-        tf.summary.histogram('labels', tf.argmax(self.label_logits, -1))
         tf.summary.histogram('target_labels', self.label)
         tf.summary.image('x_mean', self.x_mean)
+
+    VAETrainSpec = namedtuple('VAETrainSpec', 'train_op, vlb, loss')
 
     def create_train_spec(self):
         learning_rate = cfg.get('learning_rate', 0.001)
@@ -156,4 +158,4 @@ class VAE:
         optimizer = tf.train.AdamOptimizer(learning_rate)
         train_op = optimizer.minimize(vlb.total_loss, tf.train.get_global_step())
 
-        return VAETrainSpec(train_op, vlb, vlb.total_loss)
+        return self.VAETrainSpec(train_op, vlb, vlb.total_loss)

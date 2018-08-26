@@ -79,11 +79,9 @@ class Model:
                         while not sess.should_stop():
                             Fetches = namedtuple('Fetches',
                                                  'global_step,'
-                                                 'train_op, t_scale_mean,'
-                                                 'rec_loss, reg_loss')
+                                                 'train_op, rec_loss, reg_loss')
                             fetches = Fetches(global_step,
                                               vae_train.train_op,
-                                              vae.t_scale_mean,
                                               vae_train.vlb.reconstruction_loss,
                                               vae_train.vlb.regularization_loss)
                             outputs = sess.run(fetches)
@@ -94,7 +92,6 @@ class Model:
 
                             progbar.update(i, [
                                 ('rec loss', outputs.rec_loss),
-                                ('reg loss', outputs.reg_loss),
-                                ('t scale', outputs.t_scale_mean)])
+                                ('reg loss', outputs.reg_loss)])
 
                     print()
