@@ -1,0 +1,6 @@
+batch_size: 3
+decoder_scale: 1
+encoder_scale: 1
+gpu_memory_fraction: 0.8
+shuffle_buffer_size: 128
+steps_before_eval: 10
